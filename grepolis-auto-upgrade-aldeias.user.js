@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         8 DEVICE AUTO-UPGRADE & UNLOCK LVL 3 (Fixed & Integrated)
 // @namespace    Device
-// @version      2.1
-// @description  Verifica aldeias disponíveis, desbloqueia, valida pontos/requisitos de forma rigorosa e faz Auto Upgrade até o nível 3 integrado à Central (Humanizer).
+// @version      2.2
+// @description  Verifica aldeias disponíveis, desbloqueia, valida pontos via DOM de forma rigorosa e faz Auto Upgrade até o nível 3 integrado à Central (Humanizer).
 // @author       Device Grepolis
 // @match        http://*.grepolis.com/game/*
 // @match        https://*.grepolis.com/game/*
@@ -145,35 +145,22 @@
     };
 
     // ============================================================
-    // VALIDAÇÃO RIGOROSA DE PONTOS DE COMBATE
+    // VALIDAÇÃO RIGOROSA DE PONTOS DE COMBATE (VIA DOM)
     // ============================================================
     AutoUpgradeHeadless.prototype.hasEnoughBattlePoints = function () {
         try {
-            // 1. Validação direta via Game se a propriedade existir explicitamente
-            if (uw.Game && uw.Game.player_battle_points !== undefined) {
-                return uw.Game.player_battle_points > 0;
-            }
-
-            // 2. Validação alternativa buscando modelos de cultura/pontos do jogador no MM
-            var cultureModel = uw.MM.getOnlyCollectionByName('Culture');
-            if (cultureModel && cultureModel.models && cultureModel.models.length > 0) {
-                var attr = cultureModel.models[0].attributes;
-                // Se houver controle de pontos de ataque/combate guardados na cultura
-                if (attr && attr.available_battle_points !== undefined) {
-                    return attr.available_battle_points > 0;
+            var pointsElement = document.querySelector('.nui_battlepoints_container .points');
+            if (pointsElement) {
+                var pointsValue = parseInt(pointsElement.innerText.trim(), 10);
+                if (!isNaN(pointsValue)) {
+                    return pointsValue > 0;
                 }
             }
-
-            // 3. Caso o jogo utilize outro container padrão de dados do jogador
-            if (uw.ITowns && uw.ITowns.player_battle_points !== undefined) {
-                return uw.ITowns.player_battle_points > 0;
-            }
-
-            // Se nenhuma das propriedades numéricas claras for encontrada, 
-            // assumimos true para não travar caso o layout mude, mas com aviso no console.
-            return true; 
+            // Fallback seguro caso o elemento não seja encontrado por algum motivo visual
+            return false;
         } catch (e) {
-            return true;
+            console.error('[' + MODULE_NAME + '] Erro ao ler pontos de combate da interface:', e);
+            return false;
         }
     };
 
@@ -220,7 +207,7 @@
                     continue;
                 }
 
-                // 1. DESBLOQUEIO (Valida se há pontos antes de tentar abrir nova aldeia)
+                // 1. DESBLOQUEIO (Valida se há pontos na interface antes de tentar abrir nova aldeia)
                 if (existingRelation.relation_status === 0 || existingRelation.relation_status === null || existingRelation.relation_status === undefined) {
                     if (!this.hasEnoughBattlePoints()) {
                         console.log('[' + MODULE_NAME + '] Pontos insuficientes para DESBLOQUEAR a aldeia ' + farmTownId + '. Pulando...');
