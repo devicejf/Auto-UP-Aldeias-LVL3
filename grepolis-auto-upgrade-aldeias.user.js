@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         8 DEVICE AUTO-UPGRADE & UNLOCK LVL 3
 // @namespace    Device
-// @version      1
-// @description  Verifica aldeias disponíveis, desbloqueia, valida pontos/requisitos e faz Auto Upgrade até o nível 3 de forma totalmente autônoma.
+// @version      2.0
+// @description  Verifica aldeias disponíveis, desbloqueia, valida pontos/requisitos e faz Auto Upgrade até o nível 3 integrado à Central de Fluxo (Humanizer).
 // @author       Device Grepolis
 // @match        http://*.grepolis.com/game/*
 // @match        https://*.grepolis.com/game/*
@@ -43,6 +43,19 @@
     }
 
     // ============================================================
+    // VERIFICAÇÃO DE BLOQUEIOS (CAPTCHA / BOT CHECK)
+    // ============================================================
+    function isBlocked() {
+        if (uw.DeviceCentral && typeof uw.DeviceCentral.isBlocked === 'function') {
+            return uw.DeviceCentral.isBlocked();
+        }
+        var captchaContainer = document.getElementById('hcaptcha-container');
+        var botCheckModal = document.querySelector('.bot_check, .bot_check_window, iframe[src*="hcaptcha"]');
+        var gameBotCheck = uw.BotCheck && typeof uw.BotCheck.isBotCheckActive === 'function' ? uw.BotCheck.isBotCheckActive() : false;
+        return !!(captchaContainer || botCheckModal || gameBotCheck);
+    }
+
+    // ============================================================
     // CLASSE PRINCIPAL
     // ============================================================
     function AutoUpgradeHeadless() {
@@ -66,7 +79,7 @@
     };
 
     AutoUpgradeHeadless.prototype.init = function () {
-        console.log('%c[' + MODULE_NAME + '] Bot autônomo ativado para Desbloqueio e Upgrades de Aldeias.', 'color: #ff9800; font-weight: bold;');
+        console.log('%c[' + MODULE_NAME + '] Bot autônomo ativado para Desbloqueio e Upgrades de Aldeias (Integrado à Central).', 'color: #ff9800; font-weight: bold;');
         this.scheduleNextRun(5000);
     };
 
@@ -83,6 +96,17 @@
         this.running = true;
 
         try {
+            if (isBlocked()) {
+                if (uw.DeviceCentral && typeof uw.DeviceCentral.sendDiscordAlert === 'function') {
+                    uw.DeviceCentral.sendDiscordAlert("CAPTCHA detectado! Ciclo de upgrade de aldeias pausado.");
+                }
+                return;
+            }
+
+            if (uw.DeviceCentral && uw.DeviceCentral.isFarmActive) {
+                return;
+            }
+
             console.log('[' + MODULE_NAME + '] Iniciando gerenciamento de aldeias agrícolas...');
             await this.manageFarmTowns();
         } catch (e) {
@@ -158,6 +182,8 @@
         var now = Math.floor(Date.now() / 1000);
 
         for (var i = 0; i < towns.length; i++) {
+            if (isBlocked()) break;
+
             var townId = towns[i];
             var town = uw.ITowns.towns[townId];
             if (!town) continue;
@@ -188,7 +214,18 @@
                 if (existingRelation.relation_status === 0 || existingRelation.relation_status === null || existingRelation.relation_status === undefined) {
                     console.log('[' + MODULE_NAME + '] Desbloqueando aldeia agrícola ID ' + farmTownId + ' (Relação ID: ' + existingRelation.id + ')...');
 
-                    this.sendUnlockRequest(townId, farmTownId, existingRelation.id);
+                    var executeUnlock = async () => {
+                        return new Promise((resolve) => {
+                            this.sendUnlockRequest(townId, farmTownId, existingRelation.id, resolve);
+                        });
+                    };
+
+                    if (uw.DeviceCentral && typeof uw.DeviceCentral.requestQueue === 'function') {
+                        await uw.DeviceCentral.requestQueue(MODULE_NAME, executeUnlock);
+                    } else {
+                        await executeUnlock();
+                    }
+
                     await this.sleep(1500 + Math.random() * 1000);
                     continue;
                 }
@@ -206,7 +243,18 @@
 
                         console.log('[' + MODULE_NAME + '] Atualizando Aldeia ID ' + farmTownId + ' (Nível atual: ' + currentStage + ' -> Alvo: Nível ' + (currentStage + 1) + ')');
 
-                        this.sendUpgradeRequest(townId, farmTownId, existingRelation.id);
+                        var executeUpgrade = async () => {
+                            return new Promise((resolve) => {
+                                this.sendUpgradeRequest(townId, farmTownId, existingRelation.id, resolve);
+                            });
+                        };
+
+                        if (uw.DeviceCentral && typeof uw.DeviceCentral.requestQueue === 'function') {
+                            await uw.DeviceCentral.requestQueue(MODULE_NAME, executeUpgrade);
+                        } else {
+                            await executeUpgrade();
+                        }
+
                         await this.sleep(1000 + Math.random() * 500);
                     }
                 }
@@ -215,7 +263,7 @@
     };
 
     // Envia a requisição para DESBLOQUEAR (unlock) a aldeia agrícola usando o ID da relação
-    AutoUpgradeHeadless.prototype.sendUnlockRequest = function (townId, farmTownId, relationId) {
+    AutoUpgradeHeadless.prototype.sendUnlockRequest = function (townId, farmTownId, relationId, callback) {
         var data = {
             model_url: 'FarmTownPlayerRelation/' + relationId,
             action_name: 'unlock',
@@ -228,14 +276,16 @@
         try {
             uw.gpAjax.ajaxPost('frontend_bridge', 'execute', data, false, function (response) {
                 console.log('[' + MODULE_NAME + '] Aldeia agrícola ' + farmTownId + ' desbloqueada com sucesso!');
+                if (typeof callback === 'function') callback();
             });
         } catch (e) {
             console.error('[' + MODULE_NAME + '] Erro ao desbloquear aldeia ' + farmTownId, e);
+            if (typeof callback === 'function') callback();
         }
     };
 
     // Envia a requisição de melhoria (upgrade) via AJAX
-    AutoUpgradeHeadless.prototype.sendUpgradeRequest = function (townId, farmTownId, relationId) {
+    AutoUpgradeHeadless.prototype.sendUpgradeRequest = function (townId, farmTownId, relationId, callback) {
         var data = {
             model_url: 'FarmTownPlayerRelation/' + relationId,
             action_name: 'upgrade',
@@ -248,9 +298,11 @@
         try {
             uw.gpAjax.ajaxPost('frontend_bridge', 'execute', data, false, function (response) {
                 console.log('[' + MODULE_NAME + '] Upgrade enviado para a aldeia ' + farmTownId);
+                if (typeof callback === 'function') callback();
             });
         } catch (e) {
             console.error('[' + MODULE_NAME + '] Erro ao enviar upgrade para aldeia ' + farmTownId, e);
+            if (typeof callback === 'function') callback();
         }
     };
 
@@ -261,5 +313,3 @@
     });
 
 })();
-
-
