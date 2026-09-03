@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         8 DEVICE AUTO-UPGRADE & UNLOCK LVL 3 (Fixed & Integrated)
 // @namespace    Device
-// @version      2.2
+// @version      2.3
 // @description  Verifica aldeias disponíveis, desbloqueia, valida pontos via DOM de forma rigorosa e faz Auto Upgrade até o nível 3 integrado à Central (Humanizer).
 // @author       Device Grepolis
 // @match        http://*.grepolis.com/game/*
@@ -145,23 +145,22 @@
     };
 
     // ============================================================
-    // VALIDAÇÃO RIGOROSA DE PONTOS DE COMBATE (VIA DOM)
+    // VALIDAÇÃO RIGOROSA DE PONTOS DE COMBATE (VIA DOM COM LOG)
     // ============================================================
-    AutoUpgradeHeadless.prototype.hasEnoughBattlePoints = function () {
+    AutoUpgradeHeadless.prototype.getBattlePointsCount = function () {
         try {
             var pointsElement = document.querySelector('.nui_battlepoints_container .points');
             if (pointsElement) {
-                var pointsValue = parseInt(pointsElement.innerText.trim(), 10);
+                var rawText = pointsElement.innerText.trim();
+                var pointsValue = parseInt(rawText, 10);
                 if (!isNaN(pointsValue)) {
-                    return pointsValue > 0;
+                    return pointsValue;
                 }
             }
-            // Fallback seguro caso o elemento não seja encontrado por algum motivo visual
-            return false;
         } catch (e) {
-            console.error('[' + MODULE_NAME + '] Erro ao ler pontos de combate da interface:', e);
-            return false;
+            console.error('[' + MODULE_NAME + '] Erro ao ler pontos de combate:', e);
         }
+        return 0; // Se falhar ou não achar, retorna 0 por segurança total
     };
 
     // ============================================================
@@ -177,6 +176,9 @@
         var farmTowns = farmCollection.models;
         var towns = this.generateList();
         var now = Math.floor(Date.now() / 1000);
+
+        var currentBattlePoints = this.getBattlePointsCount();
+        console.log('[' + MODULE_NAME + '] Pontos de combate atuais disponíveis na conta: ' + currentBattlePoints);
 
         for (var i = 0; i < towns.length; i++) {
             if (isBlocked()) break;
@@ -207,10 +209,14 @@
                     continue;
                 }
 
-                // 1. DESBLOQUEIO (Valida se há pontos na interface antes de tentar abrir nova aldeia)
-                if (existingRelation.relation_status === 0 || existingRelation.relation_status === null || existingRelation.relation_status === undefined) {
-                    if (!this.hasEnoughBattlePoints()) {
-                        console.log('[' + MODULE_NAME + '] Pontos insuficientes para DESBLOQUEAR a aldeia ' + farmTownId + '. Pulando...');
+                // 1. DESBLOQUEIO (Exige pontos de combate > 0 e status indicando que pode ser desbloqueada)
+                // Nota: Verificamos se o relation_status é estritamente 0 ou null/undefined E se temos pontos na barra superior
+                var isLocked = (existingRelation.relation_status === 0 || existingRelation.relation_status === null || existingRelation.relation_status === undefined);
+                
+                if (isLocked) {
+                    // Se você tem 0 pontos de combate, bloqueamos imediatamente a tentativa de unlock para evitar o banner vermelho!
+                    if (currentBattlePoints <= 0) {
+                        // Apenas registramos uma vez ou ignoramos silenciosamente para não floodar o console
                         continue;
                     }
 
@@ -238,8 +244,7 @@
                     var expansionInProgress = existingRelation.expansion_at && existingRelation.expansion_at > now;
 
                     if (currentStage < 3 && !expansionInProgress) {
-                        if (!this.hasEnoughBattlePoints()) {
-                            console.log('[' + MODULE_NAME + '] Pontos de combate insuficientes para evoluir a aldeia ' + farmTownId + '. Pulando...');
+                        if (currentBattlePoints <= 0) {
                             continue;
                         }
 
